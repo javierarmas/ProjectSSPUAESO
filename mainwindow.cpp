@@ -8,6 +8,7 @@
 #include <ctime>
 #include <QMessageBox>
 #include <QIntValidator>
+#include <QShortcut>
 
 // Constructor de la clase MainWindow
 MainWindow::MainWindow(QWidget *parent)
@@ -22,8 +23,14 @@ MainWindow::MainWindow(QWidget *parent)
     // Conectar botones a sus funciones correspondientes
     connect(ui->generarButton, &QPushButton::clicked, this, &MainWindow::generarProceso);
     connect(ui->obtenerResultadosButton, &QPushButton::clicked, this, &MainWindow::obtenerResultados);
-    connect(ui->InterrupcionButton, &QPushButton::clicked, this, &MainWindow::interrumpirProceso);  // Nuevo botón de interrupción
-    connect(ui->ErrorButton, &QPushButton::clicked, this, &MainWindow::terminarConError);  // Nuevo botón para terminar con error
+    connect(ui->InterrupcionButton, &QPushButton::clicked, this, &MainWindow::interrumpirProceso);  // Nuevo boton de interrupcion
+    connect(ui->ErrorButton, &QPushButton::clicked, this, &MainWindow::terminarConError);  // Nuevo boton para terminar con error
+    // Para si queremos hacerlo con teclas la interrupcion y error
+    QShortcut *shortcutInterrumpir = new QShortcut(QKeySequence("I"), this);
+    connect(shortcutInterrumpir, &QShortcut::activated, this, &MainWindow::interrumpirProceso);
+    QShortcut *shortcutError = new QShortcut(QKeySequence("E"), this);
+    connect(shortcutError, &QShortcut::activated, this, &MainWindow::terminarConError);
+
 
     // Configurar el reloj global y el tiempo inicial en 00:00:00
     relojGlobal = new QTimer(this);
@@ -71,17 +78,18 @@ void MainWindow::generarProceso()
 
     // Inicializar procesos y lotes pendientes
     numeroProcesos = numero;
-    procesosPendientes = (numero > 5) ? 3 : numero - 2;
-    lotesPendientes = (numero > 5) ? (numero - 1) / 5 : 0;  // Calculo de lotes pendientes
+    procesosPendientes = (numero > 5) ? 3 : numero - 2; // 5 > = 3 || 4 - 2 = 2
+    lotesPendientes = (numero > 5) ? (numero - 1) / 5 : 0; // (7-1) 6 / 5 = 1 || 0
 
     // Inicializar vectores de procesos y sus TME
     nombres.clear();
     operaciones.clear();
     TMEs.clear();
     TMEOriginales.clear();
-    estados.clear();  // Limpiar el vector de estados antes de guardar nuevos
+    TEs.clear();
+    interrumpidos.clear();
+    estados.clear();
     ids.clear();
-
     idsOriginales.clear();
     nombresOriginales.clear();
     operacionesOriginales.clear();
@@ -89,16 +97,18 @@ void MainWindow::generarProceso()
 
     // Generar nombres, operaciones y TME para cada proceso
     for (int i = 1; i <= numero; i++) {
-        ids.push_back(i);  // Asignar un ID unico
+        ids.push_back(i);  // Asignar un ID unico (p2)
         nombres.push_back(generarNombre());
         operaciones.push_back(generarOperacion());
         int TME = rand() % 8 + 5;  // Generar TME aleatorio entre 5 y 12
         TMEs.push_back(TME);
         TMEOriginales.push_back(TME);
-        tmeOriginalMap[i] = TME;  // Asignar TME original al mapa con clave ID
+        TEs.push_back(0);  // Inicializar TE a 0 para cada proceso
+        interrumpidos.push_back(false);  // Inicializar como no interrumpido
+        tmeOriginalMap[i] = TME;  // Asignar TME original al mapa con clave ID (p2)
         estados.push_back("PENDIENTE");  // Estado inicial de cada proceso
 
-        // Guardar en los vectores originales
+        // Guardar en los vectores originales (p2)
         idsOriginales.push_back(i);
         nombresOriginales.push_back(nombres.back());
         operacionesOriginales.push_back(operaciones.back());
@@ -110,7 +120,6 @@ void MainWindow::generarProceso()
     if (file.open(QIODevice::WriteOnly | QIODevice::Text))
     {
         QTextStream out(&file);
-        int numeroProcesos = nombres.size();  // Numero total de procesos
 
         // Recorrer y escribir los procesos por lotes de 5
         for (int i = 0; i < numeroProcesos; i += 5)
@@ -140,11 +149,12 @@ void MainWindow::actualizarInterfaz()
     if (procesoActual < numeroProcesos)
     {
         // Mostrar el proceso en ejecucion
-        QString textoEjecucion = QString("Proceso %1: %2\n%3\nTME: %4")
+        QString textoEjecucion = QString("Proceso %1: %2\n%3\nTME: %4\nTE: %5")
                                      .arg(ids[procesoActual])
                                      .arg(nombres[procesoActual])
                                      .arg(operaciones[procesoActual])
-                                     .arg(TMEs[procesoActual]);
+                                     .arg(TMEs[procesoActual])
+                                     .arg(TEs[procesoActual]);
 
         ui->listWidgetEjecucion->clear();
         ui->listWidgetEjecucion->addItem(textoEjecucion);
@@ -153,39 +163,53 @@ void MainWindow::actualizarInterfaz()
         int procesoEnEsperaIndex = procesoActual + 1;
         if (procesoEnEsperaIndex < numeroProcesos)
         {
-            QString textoEspera = QString("Proceso %1: %2\n%3\nTME: %4")
-            .arg(ids[procesoEnEsperaIndex])
-                .arg(nombres[procesoEnEsperaIndex])
-                .arg(operaciones[procesoEnEsperaIndex])
-                .arg(TMEs[procesoEnEsperaIndex]);
+            QString textoEspera;
+
+            if (interrumpidos[procesoEnEsperaIndex]) {
+                // Si el proceso ha sido interrumpido, mostrar TR
+                textoEspera = QString("Proceso %1: %2\n%3\nTME: %4\nTR: %5")
+                                  .arg(ids[procesoEnEsperaIndex])
+                                  .arg(nombres[procesoEnEsperaIndex])
+                                  .arg(operaciones[procesoEnEsperaIndex])
+                                  .arg(TMEOriginales[procesoEnEsperaIndex])
+                                  .arg(TMEs[procesoEnEsperaIndex]);  // Mostrar el TME restante como TR
+            } else {
+                // Si no ha sido interrumpido, mostrar sin TR
+                textoEspera = QString("Proceso %1: %2\n%3\nTME: %4")
+                                  .arg(ids[procesoEnEsperaIndex])
+                                  .arg(nombres[procesoEnEsperaIndex])
+                                  .arg(operaciones[procesoEnEsperaIndex])
+                                  .arg(TMEs[procesoEnEsperaIndex]);
+            }
 
             ui->listWidgetEspera->clear();
             ui->listWidgetEspera->addItem(textoEspera);
         }
         else
         {
-            ui->listWidgetEspera->clear();  // Limpiar si no hay mas procesos en espera
+            ui->listWidgetEspera->clear();  // Limpiar si no hay más procesos en espera
         }
 
         // Calcular procesos pendientes y lotes pendientes
-        int loteEnEspera = procesoEnEsperaIndex / 5;
-        int finLoteEnEspera = std::min((loteEnEspera + 1) * 5, numeroProcesos);
+        int loteEnEspera = procesoEnEsperaIndex / 5; // 0 a 4 / 5 = 0
+        int finLoteEnEspera = std::min((loteEnEspera + 1) * 5, numeroProcesos); // 0 + 1 * 5 = 5
 
         int procesosPendientes = (procesoEnEsperaIndex >= finLoteEnEspera - 1)
-                                     ? 0 : finLoteEnEspera - procesoEnEsperaIndex - 1;
+                                     ? 0 : finLoteEnEspera - procesoEnEsperaIndex - 1; // Ejemplo 10 - 6 - 1 = 3
 
         // Ajuste para evitar negativos
         procesosPendientes = std::max(0, procesosPendientes);
 
-        // Calcular lotes pendientes
-        int totalLotes = (numeroProcesos + 4) / 5;  // Redondeo hacia arriba
-        int loteActual = procesoActual / 5;
-        int lotesPendientes = totalLotes - loteActual - 1;
+        // Calcular lotes pendientes para interrumpidos
+        int totalLotes = (numeroProcesos + 4) / 5; // (13 + 4) / 5 = 17 / 5 = 3
+        int loteActual = procesoActual / 5; // 7 / 5 = 1
+        int lotesPendientes = totalLotes - loteActual - 1; // 3 - 1 - 1 = 1
+
 
         // Ajuste de lotes pendientes si el lote actual esta completo
         if ((procesoActual + 1) % 5 == 0 && procesoActual + 1 != numeroProcesos)
         {
-            lotesPendientes--;
+            lotesPendientes--; // Decremento de los lotes cuando estan completos
         }
 
         // Ajuste para evitar negativos
@@ -202,9 +226,6 @@ void MainWindow::actualizarInterfaz()
         ui->labelReloj->setText("Reloj Global: " + tiempoTranscurrido.toString("hh:mm:ss"));
         ui->listWidgetEjecucion->clear();
         ui->listWidgetEspera->clear();
-
-        ui->labelProcesosPendientes->setText("Procesos Pendientes: 0");
-        ui->labelLotesPendientes->setText("# Lotes Pendientes: 0");
     }
 
     // Al mover el proceso terminado a la lista de "Terminados"
@@ -219,6 +240,7 @@ void MainWindow::actualizarInterfaz()
             // Validar si es una division por cero
             if (operacion.contains('/') && operacion.split(" ")[2].toInt() == 0)
             {
+                /* Desactivar comentario si queremos que se muestre el proceso si fue division por cero
                 estadosOriginales[indiceOriginal] = "ERROR";
                 QString textoTerminado = QString("Proceso %1: %2\n%3 = ERROR (Division por cero)\nTME: %4\n\n")
                                              .arg(idProcesoTerminado)
@@ -226,7 +248,7 @@ void MainWindow::actualizarInterfaz()
                                              .arg(operacion)
                                              .arg(tmeOriginalMap[idProcesoTerminado]);  // Obtener TME original del mapa
 
-                ui->listWidgetTerminados->addItem(textoTerminado);
+                ui->listWidgetTerminados->addItem(textoTerminado);*/
                 return;
             }
 
@@ -252,13 +274,15 @@ void MainWindow::actualizarReloj()
     if (procesoActual < numeroProcesos) {
         if (TMEs[procesoActual] > 0) {
             TMEs[procesoActual]--;  // Decrementar el TME del proceso actual
+            TEs[procesoActual]++;   // Incrementar el TE del proceso actual
 
             // Actualizar visualmente el proceso en ejecucion
-            QString textoEjecucion = QString("Proceso %1: %2\n%3\nTME: %4")
+            QString textoEjecucion = QString("Proceso %1: %2\n%3\nTME: %4\nTE: %5")
                                          .arg(ids[procesoActual])
                                          .arg(nombres[procesoActual])
                                          .arg(operaciones[procesoActual])
-                                         .arg(TMEs[procesoActual]);
+                                         .arg(TMEs[procesoActual])
+                                         .arg(TEs[procesoActual]);  // Mostrar el TE
             ui->listWidgetEjecucion->clear();
             ui->listWidgetEjecucion->addItem(textoEjecucion);
         } else {
@@ -292,20 +316,27 @@ void MainWindow::obtenerResultados()
             for (int j = i; j < i + 5 && j < numeroProcesos; ++j)
             {
                 QString operacion = operaciones[j];
-                int resultado = calcularResultado(operacion);
+                QString estado = estados[j];
+                if (estado == "ERROR") {
+                    out << (ids[j]) << ". " << nombres[j] << "\n";
+                    out << operacion << " = ERROR\n\n";
+                } else {
+                    int resultado = calcularResultado(operacion);
 
-                if (operacion.contains('/') && operacion.split(" ")[2].toInt() == 0) {
-                    continue;  // Omitir si es una division por cero
+                    // Validar si es una division por cero para que no la imprima
+                    if (operacion.contains('/') && operacion.split(" ")[2].toInt() == 0) {
+                        continue;
+                    }
+                    out << (ids[j]) << ". " << nombres[j] << "\n";
+                    out << operacion << " = " << resultado << "\n\n";
                 }
-
-                out << (ids[j]) << ". " << nombres[j] << "\n";
-                out << operacion << " = " << resultado << "\n\n";
             }
         }
         file.close();
     }
-    QMessageBox::information(this, "EXITO", "Archivo creado con exito.");
+    QMessageBox::information(this, "ÉXITO", "Archivo creado con éxito.");
 }
+
 
 // Genera nombres aleatorios para los procesos
 QString MainWindow::generarNombre() {
@@ -315,8 +346,8 @@ QString MainWindow::generarNombre() {
 
 // Genera una operacion matematica aleatoria para los procesos
 QString MainWindow::generarOperacion() {
-    int num1 = rand() % 11;  // Generar valores entre 0 y 10
-    int num2 = rand() % 11;
+    int num1 = rand() % 11 + 1;  // Generar valores entre 0 y 10
+    int num2 = rand() % 11 + 1;
     char operaciones[] = {'+', '-', '*', '/'};
     char operacion = operaciones[rand() % 4];
 
@@ -348,13 +379,12 @@ int MainWindow::calcularResultado(QString operacion) {
         if (num2 != 0) {
             resultado = num1 / num2;
         } else {
-            return 0;  // Si es division por cero, retornar 0
+            return 0;  // Si es division por 0, retornar 0
         }
         break;
     default:
         return 0;  // Retornar 0 si el operador no es valido
     }
-
     return resultado;
 }
 
@@ -362,34 +392,44 @@ int MainWindow::calcularResultado(QString operacion) {
 void MainWindow::interrumpirProceso() {
     if (procesoActual < numeroProcesos) {
         // Calcular el indice del final del lote actual
-        int loteActual = procesoActual / 5;
-        int finLoteActual = std::min((loteActual + 1) * 5, (int)ids.size());
+        int loteActual = procesoActual / 5; // 3 / 5 = 0
+        int finLoteActual = std::min((loteActual + 1) * 5, (int)ids.size()); // (0 + 1) * 5 = 5  finLoteActual = std::min(5, 13) = 5
 
-        // Obtener el proceso en ejecucion
+        // Marcar el proceso como interrumpido
+        interrumpidos[procesoActual] = true;
+
+        // Obtener los procesos en ejecucion
         int idProceso = ids[procesoActual];
         QString nombreProceso = nombres[procesoActual];
         QString operacionProceso = operaciones[procesoActual];
         int TMEProceso = TMEs[procesoActual];
         int TMEOriginalProceso = TMEOriginales[procesoActual];
         QString estadoProceso = estados[procesoActual];
+        int TEProceso = TEs[procesoActual];  // Obtener el TE del proceso
 
-        // Remover el proceso en ejecucion de las listas
+        // Eliminar los procesos de los actuales vectores
         ids.erase(ids.begin() + procesoActual);
         nombres.erase(nombres.begin() + procesoActual);
         operaciones.erase(operaciones.begin() + procesoActual);
         TMEs.erase(TMEs.begin() + procesoActual);
         TMEOriginales.erase(TMEOriginales.begin() + procesoActual);
         estados.erase(estados.begin() + procesoActual);
+        TEs.erase(TEs.begin() + procesoActual);  // Remover el TE
+        interrumpidos.erase(interrumpidos.begin() + procesoActual);
 
-        // Insertar el proceso al final de su lote
+        // Insertar los procesos en el indice calculado
         int insertIndex = finLoteActual - 1;
+        // Calcular el indice del proceso al final de su lote actual
         ids.insert(ids.begin() + insertIndex, idProceso);
         nombres.insert(nombres.begin() + insertIndex, nombreProceso);
         operaciones.insert(operaciones.begin() + insertIndex, operacionProceso);
         TMEs.insert(TMEs.begin() + insertIndex, TMEProceso);
         TMEOriginales.insert(TMEOriginales.begin() + insertIndex, TMEOriginalProceso);
         estados.insert(estados.begin() + insertIndex, estadoProceso);
+        TEs.insert(TEs.begin() + insertIndex, TEProceso);  // Insertar el TE
+        interrumpidos.insert(interrumpidos.begin() + insertIndex, true);  // Mantenerlo como interrumpido
 
+        // Actualizar la interfaz de usuario para reflejar los cambios en los procesos
         actualizarInterfaz();
     }
 }
